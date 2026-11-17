@@ -84,9 +84,7 @@ dors %>%
 
 par_ov <- haven::read_sas(
   here::here(sos_path, 'ut_r_par_ov_116891_2023.sas7bdat')
-) %>% 
-  filter(as.Date.character(INDATUMA, format = "%Y%m%d") >= 
-           as.Date.character('2001-01-01', format = "%Y-%m-%d"))
+)
 
 # this file contains outpatient visit data for PPS and GOT-MONICA
 par_ov %>% 
@@ -105,9 +103,7 @@ par_ov %>%
 
 par_sv <- haven::read_sas(
   here::here(sos_path, 'ut_r_par_sv_116891_2023.sas7bdat')
-) %>% 
-  filter(as.Date.character(INDATUMA, format = "%Y%m%d") >= 
-           as.Date.character('1987-01-01', format = "%Y-%m-%d"))
+)
 
 # this file contains inpatient data for PPS and GOT-MONICA
 par_sv %>% 
@@ -138,5 +134,6 @@ expo_data <- list(
   bc_1990 = stars::read_stars(here::here(exp_path, 'xBC_1990_total.tif')),
   bc_2000 = stars::read_stars(here::here(exp_path, 'xBC_2000_total.tif')),
   bc_2011 = stars::read_stars(here::here(exp_path, 'xBC_2011_total.tif'))
-)
+) %>% 
+  map(\(x) sf::st_set_crs(x, 3006))
 

@@ -4,7 +4,7 @@ library('splines')
 
 source(here::here('Code and stats/00_00_helper functions.R'))
 
-data_5 <- readRDS(here::here('Code and stats/data_5_2025-12-01.rds'))
+data_5 <- readRDS(here::here('Code and stats/data_5_2026-10-08.rds'))
 
 ## 01_01_00 Prepare analysis datasets ==========================================
 data_6_cGN <- data_5 %>%
@@ -12,6 +12,7 @@ data_6_cGN <- data_5 %>%
     ~ .x %>%
       mutate(
         smo = as.factor(smo) %>% relevel(ref = '1'),
+        phy = as.factor(phy) %>% relevel(ref = '1'),
         date_in = as.Date.character(paste0(year, '-01-01'),
                                     format = '%Y-%m-%d'),
         date_out = as.Date.character(paste0(year, '-12-31'),
@@ -23,7 +24,6 @@ data_6_cGN <- data_5 %>%
                (date_in <= date_death | is.na(date_death)) &
                (age_in >= 30) &
                (age_in < 90) &
-               ((date_in >= date_immig) | is.na(date_immig)) &
                abroad3y == 0
       ) %>%
       mutate(
@@ -44,6 +44,7 @@ data_6_DN <- data_5 %>%
     ~ .x %>%
       mutate(
         smo = as.factor(smo) %>% relevel(ref = '1'),
+        phy = as.factor(phy) %>% relevel(ref = '1'),
         date_in = as.Date.character(paste0(year, '-01-01'),
                                     format = '%Y-%m-%d'),
         date_out = as.Date.character(paste0(year, '-12-31'),
@@ -55,7 +56,6 @@ data_6_DN <- data_5 %>%
                (date_in <= date_death | is.na(date_death)) &
                (age_in >= 30) &
                (age_in < 90) &
-               ((date_in >= date_immig) | is.na(date_immig)) &
                abroad3y == 0
       ) %>%
       mutate(
@@ -76,6 +76,7 @@ data_6_HN <- data_5 %>%
     ~ .x %>%
       mutate(
         smo = as.factor(smo) %>% relevel(ref = '1'),
+        phy = as.factor(phy) %>% relevel(ref = '1'),
         date_in = as.Date.character(paste0(year, '-01-01'),
                                     format = '%Y-%m-%d'),
         date_out = as.Date.character(paste0(year, '-12-31'),
@@ -87,7 +88,6 @@ data_6_HN <- data_5 %>%
                (date_in <= date_death | is.na(date_death)) &
                (age_in >= 30) &
                (age_in < 90) &
-               ((date_in >= date_immig) | is.na(date_immig)) &
                abroad3y == 0
       ) %>%
       mutate(
@@ -102,20 +102,61 @@ data_6_HN <- data_5 %>%
                            date_out)
       )
   )
+
+# complete case models
+data_7_cGN <- data_6_cGN %>% 
+  map(\(x) filter(
+    x, 
+    !is.na(age_in),
+    !is.na(sex),
+    !is.na(ses),
+    !is.na(edu),
+    !is.na(civ),
+    !is.na(smo),
+    !is.na(phy)
+  )
+  )
+
+data_7_DN <- data_6_DN %>% 
+  map(\(x) filter(
+    x, 
+    !is.na(age_in),
+    !is.na(sex),
+    !is.na(ses),
+    !is.na(edu),
+    !is.na(civ),
+    !is.na(smo),
+    !is.na(phy)
+  )
+  )
+
+data_7_HN <- data_6_HN %>% 
+  map(\(x) filter(
+    x, 
+    !is.na(age_in),
+    !is.na(sex),
+    !is.na(ses),
+    !is.na(edu),
+    !is.na(civ),
+    !is.na(smo),
+    !is.na(phy)
+  )
+  )
+
 ## 01_01_01 Set up surv objects ================================================
-surv_cGN <- map(data_6_cGN,
+surv_cGN <- map(data_7_cGN,
                 ~ Surv(time = .x$date_in %>% as.double,
                        time2 = .x$date_out %>% as.double,
                        event = .x$date_cGN_p == 1,
                        type = 'counting'))
 
-surv_DN <- map(data_6_DN,
+surv_DN <- map(data_7_DN,
                 ~ Surv(time = .x$date_in %>% as.double,
                        time2 = .x$date_out %>% as.double,
                        event = .x$date_DN_p == 1,
                        type = 'counting'))
 
-surv_HN <- map(data_6_HN,
+surv_HN <- map(data_7_HN,
                 ~ Surv(time = .x$date_in %>% as.double,
                        time2 = .x$date_out %>% as.double,
                        event = .x$date_HN_p == 1,
@@ -124,16 +165,15 @@ surv_HN <- map(data_6_HN,
 ## 01_00_02 Define covariate models ============================================
 models <- c(
   m0 = 'ns(age_in, 4) + sex',
-  m1 = 'ns(age_in, 4) + sex + ses',
-  m2 = 'ns(age_in, 4) + sex + ses + edu + smo + phy',
-  m3 = 'ns(age_in, 4) + sex + ses + edu + smo + phy + ns(bmi, 4) + (date_DM_p > 0) + (date_HPT_p > 0)')
+  m1 = 'ns(age_in, 4) + sex + ses + edu + civ + smo + phy + ns(bmi, 4)',
+  m2 = 'ns(age_in, 4) + sex + ses + edu + civ + smo + phy + ns(bmi, 4) + (date_DM_p == 2) + (date_HPT_p == 2)')
 
 ## 01_00_03 Regression analyses ================================================
-res <- crossing(
+res_aet <- crossing(
   cohort = c('pps', 'got'),
   outcome = c('cGN', 'DN', 'HN'),
-  model = c('m0', 'm1', 'm2'),
-  exposure = c('pm25', 'pm10', 'nox'),
+  model = c('m0', 'm1'),
+  exposure = c('pm25', 'pm10', 'nox', 'bc'),
   lag = paste0('_lag', c('1', '2_5', '6_10'))
 ) %>% 
   purrr::pmap(\(cohort, outcome, model, exposure, lag) 
@@ -141,27 +181,27 @@ res <- crossing(
   bind_rows()
 
 ## 01_00_04 Cleanup, plot and save =============================================
-res_2 <- res %>%
+res_aet_2 <- res_aet %>%
   tibble::remove_rownames() %>% 
-  #correction factor to present bc and nox in .1 and 10ug/m3 increments
-  mutate(corrf = case_when(exposure == 'nox' ~ 10,
+  #present nox and bc in 10 and 0.1 ug/m3 increments
+  mutate(inc = case_when(exposure == 'nox' ~ 10,
                            exposure == 'bc' ~ .1,
                            T ~ 1),
          exposure = paste0(exposure, lag),
-         HR = paste0(sprintf(round(exp(beta)^corrf, 2), 
+         HR = paste0(sprintf(round(exp(beta)^inc, 2), 
                              fmt = '%0.2f'), ' (',
-                     sprintf(round(exp(beta-1.96*se)^corrf, 2), 
+                     sprintf(round(exp(beta-1.96*se)^inc, 2), 
                              fmt = '%0.2f'), '-',
-                     sprintf(round(exp(beta+1.96*se)^corrf, 2), 
+                     sprintf(round(exp(beta+1.96*se)^inc, 2), 
                              fmt = '%0.2f'), ')')) %>% 
   select(-lag)
 
-writexl::write_xlsx(res_2, 
+writexl::write_xlsx(res_aet_2, 
                     here::here('Outputs', 
-                               paste0('res_aetiological_', Sys.Date(), '.xlsx')))
+                               paste0('res_aet_', Sys.Date(), '.xlsx')))
 
-res_2 %>%
-  filter(model == 'm2') %>% 
+res_aet_2 %>%
+  filter(model == 'm1') %>% 
   mutate(expo_f = str_sub(exposure, 1, 4) %>% 
            str_remove('_') %>% 
            str_to_upper() %>% 
@@ -172,10 +212,10 @@ res_2 %>%
          exposure_f = paste0(expo_f, '\n', lag_f)) %>% 
   ggplot(aes(x = exposure_f, colour = cohort)) +
   geom_hline(aes(yintercept = 1), linetype = 'dashed') +
-  geom_point(aes(y = exp(beta)),
+  geom_point(aes(y = exp(beta)^inc),
              position = position_dodge(width = .5)) +
-  geom_errorbar(aes(ymin = exp(beta-1.96*se),
-                    ymax = exp(beta+1.96*se)),
+  geom_errorbar(aes(ymin = exp(beta-1.96*se)^inc,
+                    ymax = exp(beta+1.96*se)^inc),
                 width = .5,
                 position = position_dodge(width = .5)) +
   scale_y_continuous(transform = 'log', 
@@ -186,5 +226,5 @@ res_2 %>%
   theme_linedraw() +
   theme(panel.grid.minor = element_blank())
 
-ggsave(here::here('Outputs', paste0('res_aetiological_', Sys.Date(), '.png')), 
+ggsave(here::here('Outputs', paste0('res_aet_', Sys.Date(), '.png')), 
        width = 5, height = 6)

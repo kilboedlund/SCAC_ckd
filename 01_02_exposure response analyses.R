@@ -4,41 +4,33 @@ library('splines')
 
 source(here::here('Code and stats/00_00_helper functions.R'))
 
-#data_6_CKD <- readRDS(here::here('Code and stats', 'data_6_CKD_2025-12-01.rds'))
-#data_6_RRT <- readRDS(here::here('Code and stats', 'data_6_RRT_2025-12-01.rds'))
+data_7_CKD <- readRDS(here::here('Code and stats', 'data_7_CKD_2026-10-08.rds'))
+data_7_RRT <- readRDS(here::here('Code and stats', 'data_7_RRT_2026-10-08.rds'))
 
 ## 01_02_00 Set up surv objects ================================================
-surv_CKD <- map(data_6_CKD,
+surv_CKD <- map(data_7_CKD,
                 ~ Surv(time = .x$date_in %>% as.double,
                        time2 = .x$date_out %>% as.double,
                        event = .x$date_CKD_p == 1,
                        type = 'counting'))
 
-surv_RRT <- map(data_6_RRT,
+surv_RRT <- map(data_7_RRT,
                 ~ Surv(time = .x$date_in %>% as.double,
                        time2 = .x$date_out %>% as.double,
                        event = .x$date_RRT_p == 1,
                        type = 'counting'))
 
 ## 01_02_01 Define covariate models ============================================
-# masking some variables in GOT-MONICA as they are missing for participants recruited in 1985
-data_6_CKD$got$edu <- 1
-data_6_RRT$got$edu <- 1
-data_6_CKD$got$civ <- 1
-data_6_RRT$got$civ <- 1
-
 models <- c(
   m0 = 'ns(age_in, 4) + sex',
-  m1 = 'ns(age_in, 4) + sex + ses + edu + civ',
-  m2 = 'ns(age_in, 4) + sex + ses + edu + civ + smo + phy',
-  m3 = 'ns(age_in, 4) + sex + ses + edu + civ + smo + phy + ns(bmi, 4) + (date_DM_p > 0) + (date_HPT_p > 0)'
-  )
+  m1 = 'ns(age_in, 4) + sex + ses + edu + civ + smo + phy + ns(bmi, 4)',
+  m2 = 'ns(age_in, 4) + sex + ses + edu + civ + smo + phy + ns(bmi, 4) + (date_DM_p == 2) + (date_HPT_p == 2)')
 
 ## 01_02_02 Regression analyses ================================================
-res <- crossing(
+res_er <- crossing(
   cohort = c('pps', 'got'),
   outcome = c('CKD', 'RRT'),
-  model = c('m0', 'm1', 'm2', 'm3'),
+  model = c('m0', 'm1', 'm2'),
   exposure = c('pm25', 'pm10', 'nox', 'bc'),
   lag = paste0('_lag', c('1', '2_5', '6_10'))
 ) %>% 
@@ -47,7 +39,7 @@ res <- crossing(
   bind_rows()
 
 ## 01_02_03 Cleanup, plot and save =============================================
-res_2 <- res %>%
+res_2 <- res_er %>%
   tibble::remove_rownames() %>% 
   pivot_longer(cols = c(contains('beta'), contains('se'))) %>% 
   mutate(quartile = str_sub(name, start = -1, end = -1),

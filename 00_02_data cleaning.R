@@ -27,15 +27,17 @@ data_1 <- list(
           date_death_indata = d_death,
           sex,
           ses = area_income94,
-          civ = mar_stat,
-          edu = edulev,
+          #civ = mar_stat,
+          #edu = edulev,
           smo = smoking,
           smo_numcigs = numcigs,
           phy = physact,
           bmi
         ),
       by = 'id'
-    ),
+    ) %>% 
+    mutate(civ = 1,
+           edu = 1),
   
   pps = ke_lev_demografi %>%
     filter(SenPNr == 1) %>% 
@@ -64,7 +66,14 @@ data_1 <- list(
       by = 'id'
     )
 )
-# 21 individuals are in both GOT_MONICA and PPS
+
+# 21 individuals are in both GOT_MONICA and PPS, remove them from GOT-MONICA
+gotpps_dupl <- intersect(data_1$got$id, data_1$pps$id)
+
+data_1$got <- data_1$got %>% 
+  filter(!id %in% gotpps_dupl)
+
+saveRDS(data_1, here::here('Code and stats', paste0('data_1_', Sys.Date(), '.rds')))
 
 ## 00_02_01 Create a clean coordinate data set =================================
 # This section extracts coordinates and assigns exposure for each of the cohorts 
@@ -126,7 +135,7 @@ coords_2 <-
   map(~ .x %>%
         select(xkoord, ykoord) %>%
         distinct() %>%
-        sf::st_as_sf(coords = c('ykoord', 'xkoord')))
+        sf::st_as_sf(coords = c('ykoord', 'xkoord'), crs = 3006))
 
 ## 00_02_02 Connect the coordinate data set with air pollution data ============
 # meteorological yearly correction coefficients for 1991-1999 and 2001-2010
@@ -141,7 +150,7 @@ coords_3 <- map(
   ~ purrr::reduce(
     list(
       stars::st_extract(expo_data$pm25_1990,
-                        at = .x),
+                        at = sf::st_transform(.x, sf::st_crs(3006))),
       stars::st_extract(expo_data$pm25_2000,
                         at = .x),
       stars::st_extract(expo_data$pm25_2011,
@@ -277,10 +286,10 @@ coords_4 <- purrr::map2(coords_1 %>%
                           map( ~ .x %>% 
                                  filter(!is.na(ykoord) &
                                           !is.na(xkoord)) %>%
-                                 sf::st_as_sf(coords = c('ykoord', 'xkoord'))),
+                                 sf::st_as_sf(coords = c('ykoord', 'xkoord'), crs = 3006)),
                         coords_3,
                         
-                        ~ sf::st_join(.x, .y, by = 'geometry') %>%
+                        ~ sf::st_join(.x, .y) %>%
                           pivot_longer(cols = -c('id', 'year', 'geometry'),
                                        names_to = c('expo', 'year_expo'),
                                        names_sep = '_',
@@ -292,21 +301,20 @@ coords_4 <- purrr::map2(coords_1 %>%
                                       values_from = 'value')
 )
 
-# Here I plot PM25 for sanity check
+# Here I plot air pollutants for sanity check
 for (e in c('pm25', 'pm10', 'nox', 'bc')) {
   map2(coords_4,
        names(coords_4),
-       ~ {
+       \(x, y) {
          ggplot() +
            geom_sf(data = rnaturalearth::ne_countries(
              country = 'sweden',
              type = 'countries',
              scale = 'medium'
            )) +
-           geom_sf(data = .x %>%
-                     sf::st_set_crs(3006) %>%
-                     filter(!is.na(get(e)), year %in% c(1990, 1995, 2000, 2010)),
-                   aes(colour = bc)) +
+           geom_sf(data = x %>%
+                     filter(!is.na(x[[e]]), year %in% c(1990, 1995, 2000, 2010)),
+                   aes(colour = get(e))) +
            stat_sf_coordinates() +
            scale_colour_viridis_c(option = 'turbo') +
            coord_sf(xlim = c(11, 13), ylim = c(57.2, 58.6)) +
@@ -317,7 +325,7 @@ for (e in c('pm25', 'pm10', 'nox', 'bc')) {
                  axis.ticks = element_blank())
          ggsave(
            filename = here::here('Outputs', 'Maps', 
-                                 paste0(.y, '_map_', e , '.svg')),
+                                 paste0(y, '_map_', e , '.svg')),
            device = 'svg',
            height = 8,
            width = 5
@@ -338,14 +346,14 @@ data_2 <-
   )
 
 ## 00_02_03 Connect indata data set with migration data ========================
-# First I clean the migration data
+# Clean the migration data
 mig_1 <- ke_lev_migrationer %>%
   rename('id' = 'LopNr',
          'date_mig' = 'Datum',
          'dir_mig' = 'Posttyp') %>%
   mutate(date_mig = as.Date.character(date_mig %>% as.character, format = '%Y%m%d'))
 
-# Then I find individuals who are >3 years abroad
+# Find individuals who are >3 years abroad
 mig_2 <- mig_1 %>% 
   arrange(id, date_mig) %>% 
   group_by(id) %>% 
@@ -355,9 +363,12 @@ mig_2 <- mig_1 %>%
   filter(dir_mig == 'Utv') %>% 
   transmute(id,
             start = date_mig,
-            end = case_when(
-              next_dir == 'Inv' ~ next_date,
-              T ~ as.Date.character('2023-12-31', format = '%Y-%m-%d')
+            end = if_else(next_dir == 'Inv', 
+                          true = next_date, 
+                          false = as.Date.character('2023-12-31', 
+                                                    format = '%Y-%m-%d'),
+                          missing = as.Date.character('2023-12-31', 
+                                                      format = '%Y-%m-%d')
             )
   ) %>% 
   ungroup() %>% 
@@ -366,8 +377,7 @@ mig_2 <- mig_1 %>%
     long_abroad = dur_years > 3 ) %>% 
   filter(long_abroad)
 
-# Then I transform to one-year-per-row and mask the individuals who are >3 years 
-# abroad
+# Transform to one-year-per-row, mask the individuals who are >3 years abroad
 mig_3 <- mig_2 %>% 
   mutate(year_start = year(start),
          year_end = year(end-days(1))) %>% 
@@ -406,11 +416,11 @@ dors_1 <- dors %>%
                        true = DODSDAT,
                        false = NA_Date_),
     date_DM  = if_else((ICD == 9 & str_detect(diag, '\\b250')) |
-                         (ICD == 10 & str_detect(diag, '\\bE1*')),
+                         (ICD == 10 & str_detect(diag, '\\bE1[0-9]')),
                        true = DODSDAT, 
                        false = NA_Date_),
-    date_HPT = if_else((ICD == 9 & str_detect(diag, '\\b401')) |
-                         (ICD == 10 & str_detect(diag, '\\bI1*')),
+    date_HPT = if_else((ICD == 9 & str_detect(diag, '\\b40[1-5]')) |
+                         (ICD == 10 & str_detect(diag, '\\bI1[0-9]')),
                        true = DODSDAT, 
                        false = NA_Date_),
     date_cGN = if_else((ICD == 9 & str_detect(diag, '\\b582')) |
@@ -418,7 +428,7 @@ dors_1 <- dors %>%
                        true = DODSDAT, 
                        false = NA_Date_),
     date_DN  = if_else((ICD == 9 & str_detect(diag, '\\b250D')) |
-                         (ICD == 10 & str_detect(diag, '\\bE1[0-4].2')),
+                         (ICD == 10 & str_detect(diag, '\\bE1[0-4]2')),
                        true = DODSDAT,
                        false = NA_Date_),
     date_HN  = if_else((ICD == 9 & str_detect(diag, '\\b40[34]')) |
@@ -442,32 +452,32 @@ par_1 <- bind_rows(par_sv %>% mutate(reg = 'sv'),
         TRUE ~ INDATUMA
       ) %>%
       as.Date.character(format = '%Y%m%d'),
-    date_CKD = if_else((str_detect(diag, '\\b585')) |
-                         (str_detect(diag, '\\bN18')),
+    date_CKD = if_else((AR < 1997 & str_detect(diag, '\\b585')) |
+                         (AR >= 1997 & str_detect(diag, '\\bN18')),
                        true = INDATUMA,
                        false = NA_Date_),
-    date_RRT = if_else((str_detect(diag, '\\bV(56|45B|42A)')) |
-                         (str_detect(diag, '\\bZ(49|99\\.2|94\\.0)')),
+    date_RRT = if_else((AR < 1997 & str_detect(diag, '\\bV(56|45B|42A)')) |
+                         (AR >= 1997 & str_detect(diag, '\\bZ(49|992|940)')),
                        true = INDATUMA,
                        false = NA_Date_),
-    date_DM  = if_else((str_detect(diag, '\\b250')) |
-                         (str_detect(diag, '\\bE1*')),
+    date_DM  = if_else((AR < 1997 & str_detect(diag, '\\b250')) |
+                         (AR >= 1997 & str_detect(diag, '\\bE1[0-9]')),
                        true = INDATUMA, 
                        false = NA_Date_),
-    date_HPT = if_else((str_detect(diag, '\\b401')) |
-                         (str_detect(diag, '\\bI1*')),
+    date_HPT = if_else((AR < 1997 & str_detect(diag, '\\b40[1-5]')) |
+                         (AR >= 1997 & str_detect(diag, '\\bI1[0-9]')),
                        true = INDATUMA, 
                        false = NA_Date_),
-    date_cGN = if_else((str_detect(diag, '\\b582')) |
-                         (str_detect(diag, '\\bN03')),
+    date_cGN = if_else((AR < 1997 & str_detect(diag, '\\b582')) |
+                         (AR >= 1997 & str_detect(diag, '\\bN03')),
                        true = INDATUMA, 
                        false = NA_Date_),
-    date_DN  = if_else((str_detect(diag, '\\b250D')) |
-                         (str_detect(diag, '\\bE1[0-4].2')),
+    date_DN  = if_else((AR < 1997 & str_detect(diag, '\\b250D')) |
+                         (AR >= 1997 & str_detect(diag, '\\bE1[0-4]2')),
                        true = INDATUMA,
                        false = NA_Date_),
-    date_HN  = if_else((str_detect(diag, '\\b40[34]')) |
-                         (str_detect(diag, '\\bI1[23]')),
+    date_HN  = if_else((AR < 1997 & str_detect(diag, '\\b40[34]')) |
+                         (AR >= 1997 & str_detect(diag, '\\bI1[23]')),
                        true = INDATUMA,
                        false = NA_Date_)) %>%
   select(id = LopNr, contains('date_'))
@@ -531,14 +541,16 @@ data_5 <- data_4 %>%
                                 year(.x) < year ~ 2),
                     .names = '{col}_p')))
 
-## 00_02_06 Right and left censor ==============================================
-#data_5 <- readRDS(here::here('Code and stats/data_5_2025-12-01.rds'))
+data_5$pps$edu = as.factor(data_5$pps$edu)
+data_5$pps$civ = as.factor(data_5$pps$civ)
 
+## 00_02_06 Right and left censor ==============================================
 data_6_CKD <- data_5 %>%
   map(
     ~ .x %>%
       mutate(
         smo = as.factor(smo) %>% relevel(ref = '1'),
+        phy = as.factor(phy) %>% relevel(ref = '1'),
         date_in = as.Date.character(paste0(year, '-01-01'),
                                     format = '%Y-%m-%d'),
         date_out = as.Date.character(paste0(year, '-12-31'),
@@ -550,7 +562,6 @@ data_6_CKD <- data_5 %>%
                (date_in <= date_death | is.na(date_death)) &
                (age_in >= 30) &
                (age_in < 90) &
-               ((date_in >= date_immig) | is.na(date_immig)) &
                abroad3y == 0
       ) %>%
       mutate(
@@ -571,6 +582,7 @@ data_6_RRT <- data_5 %>%
     ~ .x %>%
       mutate(
         smo = as.factor(smo) %>% relevel(ref = '1'),
+        phy = as.factor(phy) %>% relevel(ref = '1'),
         date_in = as.Date.character(paste0(year, '-01-01'),
                                     format = '%Y-%m-%d'),
         date_out = as.Date.character(paste0(year, '-12-31'),
@@ -578,11 +590,10 @@ data_6_RRT <- data_5 %>%
         age_in = year - as.double(date_birth)
       ) %>%
       filter((date_RRT_p != 2) &
-               (date_out >= date_fup) &
+               (date_in >= date_fup) &
                (date_death >= date_in | is.na(date_death)) &
                (age_in >= 30) &
                (age_in < 90) &
-               ((date_in >= date_immig) | is.na(date_immig)) &
                abroad3y == 0
       ) %>%
       mutate(
@@ -598,6 +609,35 @@ data_6_RRT <- data_5 %>%
       )
   )
 
+# complete case models
+data_7_CKD <- data_6_CKD %>% 
+  map(\(x) filter(
+    x, 
+    !is.na(age_in),
+    !is.na(sex),
+    !is.na(ses),
+    !is.na(edu),
+    !is.na(civ),
+    !is.na(smo),
+    !is.na(phy),
+    !is.na(bmi)
+  )
+  )
+
+data_7_RRT <- data_6_RRT %>% 
+  map(\(x) filter(
+    x, 
+    !is.na(age_in),
+    !is.na(sex),
+    !is.na(ses),
+    !is.na(edu),
+    !is.na(civ),
+    !is.na(smo),
+    !is.na(phy),
+    !is.na(bmi)
+  )
+  )
+
 ## 00_02_07 Save complete clean basis data sets to file ========================
 saveRDS(data_4, file = here::here('Code and stats', 
                                   paste0('data_4_', Sys.Date(), '.rds')))
@@ -605,13 +645,13 @@ saveRDS(data_4, file = here::here('Code and stats',
 saveRDS(data_5, file = here::here('Code and stats', 
                                   paste0('data_5_', Sys.Date(), '.rds')))
 
-saveRDS(data_6_CKD, file = here::here('Code and stats',
-                                      paste0('data_6_CKD_',
+saveRDS(data_7_CKD, file = here::here('Code and stats',
+                                      paste0('data_7_CKD_',
                                              Sys.Date(), 
                                              '.rds')))
 
-saveRDS(data_6_RRT, file = here::here('Code and stats',
-                                      paste0('data_6_RRT_',
+saveRDS(data_7_RRT, file = here::here('Code and stats',
+                                      paste0('data_7_RRT_',
                                              Sys.Date(), 
                                              '.rds')))
 

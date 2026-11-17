@@ -13,7 +13,7 @@ scac_ckd_core_analysis <- function(cohort, outcome, model, exposure, lag) {
                                exposure, lag, ' + ', 
                                models[model]))
   fit <- coxph(formula,
-               data = get(paste0('data_6_', outcome))[[cohort]])
+               data = get(paste0('data_7_', outcome))[[cohort]])
   return(
     data.frame(
       cohort = cohort,
@@ -23,7 +23,8 @@ scac_ckd_core_analysis <- function(cohort, outcome, model, exposure, lag) {
       model = model,
       beta = coef(fit)[paste0(exposure, lag)],
       se = summary(fit)$coefficients[paste0(exposure, lag), 'se(coef)'],
-      py = fit$n,
+      py = sum(fit$y[, 'stop'] + 1 - fit$y[, 'start']) / 365.25, 
+      #py = fit$n,
       events = fit$nevent
     )
   )
@@ -34,14 +35,14 @@ scac_ckd_er_analysis <- function(cohort, outcome, model, exposure, lag) {
                                    ' ~ ',
                                    exposure, lag, ' + ',
                                    models[model]))
-  data_cat <- get(paste0('data_6_', outcome))[[cohort]] %>%
+  data_cat <- get(paste0('data_7_', outcome))[[cohort]] %>%
     mutate(across(
       all_of(paste0(exposure, lag)),
       ~ ntile(.x, 4) %>%
         factor() %>%
-        recode_factor(ref = '1')
+        relevel(ref = '1')
     ))
-  data_cont <- get(paste0('data_6_', outcome))[[cohort]] %>%
+  data_cont <- get(paste0('data_7_', outcome))[[cohort]] %>%
     mutate(across(all_of(paste0(exposure, lag)),
                   ~ ntile(.x, 4)))
   fit_cat <- coxph(formula,
@@ -62,8 +63,9 @@ scac_ckd_er_analysis <- function(cohort, outcome, model, exposure, lag) {
       beta4 = coef(fit_cat)[paste0(exposure, lag, '4')],
       se4 = summary(fit_cat)$coefficients[paste0(exposure, lag, '4'), 'se(coef)'],
       p.trend = summary(fit_cont)$coefficients[paste0(exposure, lag), 'Pr(>|z|)'],
-      py = fit$n,
-      events = fit$nevent
+      py = sum(fit_cont$y[, 'stop'] + 1 - fit_cont$y[, 'start']) / 365.25, 
+      #py = fit_cat$n,
+      events = fit_cat$nevent
     )
   )
 }
